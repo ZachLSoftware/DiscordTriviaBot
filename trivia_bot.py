@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from trivia_cog import TriviaCog
 import os
 from trivia_file_helper import TriviaFileHelper
+from trivia_bot_sql_controller import SQLiteController
 
 
 class TriviaBot(commands.Bot):
@@ -17,35 +18,66 @@ class TriviaBot(commands.Bot):
     open_questions_file = "questions.json"
 
     async def on_ready(self):
+        self.controller = SQLiteController("test.sqlite")
         await self.set_commands()
         print(f'{self.user} has connected to Discord!')
-        for channel in self.get_all_channels():
-            if channel.name=="trivia-showdown":
-                self.channel = channel
+        await self.insert_guild_data()
+
+
         
-        self.members = channel.members
-        self.members.remove(self.user)
-        for member in self.members:
-            self.scores[str(member.id)]=0
-        if os.path.isfile(self.scores_file):
-            load = TriviaFileHelper().load_file(self.scores_file)
-            if load != {}:
-                for k,v in load.items():
-                    self.scores[k]=v
-            else:
-                TriviaFileHelper().save_file(self.scores_file, self.scores)
+        # self.members = channel.members
+        # self.members.remove(self.user)
+        # for member in self.members:
+        #     self.scores[str(member.id)]=0
+        # if os.path.isfile(self.scores_file):
+        #     load = TriviaFileHelper().load_file(self.scores_file)
+        #     if load != {}:
+        #         for k,v in load.items():
+        #             self.scores[k]=v
+        #     else:
+        #         TriviaFileHelper().save_file(self.scores_file, self.scores)
 
         
         #await self.sync_tree()
 
+
+
+    async def insert_guild_data(self):
+        #Insert data into database if it doesn't exist
+        for guild in self.guilds:
+            self.controller.insert_object("guild", ["id", "guild_name"], [guild.id, guild.name], guild.id)
+            for member in guild.members:
+                if member == self.user:
+                    continue
+                self.controller.insert_object("user", ["id", "username"], [member.id, member.name], member.id)
+                self.controller.insert_object("scorecard", ["guild_id", "user_id"], [guild.id, member.id], (guild.id, member.id))
+        for channel in self.get_all_channels():
+            if channel.type == discord.ChannelType.text:
+                is_allowed = await self.is_bot_allowed(channel)
+                if is_allowed and channel.name!="general":
+                    self.controller.insert_object("channel", ["id", "channel_name"], [channel.id, channel.name], channel.id)
+
+
+    async def is_bot_allowed(self, channel):
+        bot_member = channel.guild.get_member(self.user.id)
+        if bot_member:
+            permissions = channel.permissions_for(bot_member)
+            return permissions.send_messages
+        return False
     async def set_commands(self):
         await TriviaCog(self).setup()
     
-    def get_scores(self):
+    def get_scores(self, guild: discord.Guild):
         score_str = ""
-        for member in self.members:
-            score_str += member.name
-            score_str += ": " + str(self.scores[str(member.id)]) + "\n"
+        for member in guild.members:
+            if member == self.user:
+                continue
+            score_str += member.name + ":   "
+            score_str += str(self.controller.get_score(guild.id, member.id)['score']) +"\n"
+        
+        # for member in self.members:
+        #     score_str += member.name
+        #     score_str += ": " + str(self.scores[str(member.id)]) + "\n"
         return score_str
 
     async def sync_tree(self):
@@ -59,12 +91,10 @@ class TriviaBot(commands.Bot):
     def get_trivia_channel(self):
         return self.channel
     
-    def update_scores(self, user_id, score):
-        self.scores[str(user_id)]+=score
-        TriviaFileHelper().save_file(self.scores_file, self.scores)
+        
 
 load_dotenv()
-TOKEN = os.getenv("TOKEN")
+TOKEN = os.getenv("TEST_TOKEN")
 intents = discord.Intents.default()
 intents.message_content=True
 intents.guilds = True

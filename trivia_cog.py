@@ -26,16 +26,16 @@ class TriviaCog(commands.Cog):
 
         await self.setup_question(interaction, q)
 
-    @app_commands.command(name="clear-channel", description="Clear all messages in the Trivia Channel")
-    async def clear_channel(self, interaction: discord.Interaction):
-        channel=interaction.channel
-        if interaction.channel.name!="trivia-showdown":
-            return
-        history = []
-        async for msg in interaction.channel.history(limit=100):
-            history.append(msg)
-        await interaction.channel.delete_messages(history)
-        await channel.send(f"Channel has been cleared by {interaction.user}")
+    # @app_commands.command(name="clear-channel", description="Clear all messages in the Trivia Channel")
+    # async def clear_channel(self, interaction: discord.Interaction):
+    #     channel=interaction.channel
+    #     if interaction.channel.name!="trivia-showdown":
+    #         return
+    #     history = []
+    #     async for msg in interaction.channel.history(limit=100):
+    #         history.append(msg)
+    #     await interaction.channel.delete_messages(history)
+    #     await channel.send(f"Channel has been cleared by {interaction.user}")
 
 
     @app_commands.command(name="new-question", description="Challenge all to a new question of the category of your choice")
@@ -51,7 +51,7 @@ class TriviaCog(commands.Cog):
 
     @app_commands.command(name="scoreboard", description="See the scoreboard")
     async def scoreboard(self, interaction: discord.Interaction):
-        await interaction.response.send_message(content=self.bot.get_scores(), ephemeral=False)
+        await interaction.response.send_message(content=self.bot.get_scores(interaction.guild), ephemeral=False)
 
     async def question_completed(self, interaction: discord.Interaction):
         del self.open_questions[str(interaction.message.id)]
@@ -75,20 +75,23 @@ class TriviaCog(commands.Cog):
         await interaction.response.send_message(content="@everyone \n" + user_string+"# "+html.unescape(q['question']),view=question_view(copy.deepcopy(q), members, self.question_completed, self.user_answered), ephemeral=False)
 
         msg = await interaction.original_response()
-        has_answered = {str(member.id): [False, False] for member in members}
-        self.open_questions[str(msg.id)] = {"channel_id": str(msg.channel.id), "question": q, "users": has_answered}
-        TriviaFileHelper().save_file(self.questions_file, self.open_questions)
-
+        self.bot.controller.insert_object("message", ["id", "channel_id"],[msg.id, msg.channel.id], msg.id)
+        question_id=self.bot.controller.insert_object("question", ["content", "answer", "category", "difficulty", "message_id"], [q['question'], q['correct_answer'], q['category'], q['difficulty'], msg.id])
+        for incorrect in q['incorrect_answers']:
+            self.bot.controller.insert_object("wrong_answers", ["label", "question_id"], [incorrect, question_id])
+        for member in members:
+            self.bot.controller.insert_object("user_answers", ["user_id", "question_id"], [member.id, question_id])
 
     async def user_answered(self, interaction: discord.Interaction, correct: bool):
-
+        test = self.bot.controller.fetch_open_questions()
+        print(test)
         if correct: 
-            self.bot.update_scores(interaction.user.id, 1)
+            self.bot.controller.update_score(interaction.guild.id, interaction.user.id, 1)
             result_string = ": Correct"
             response_string = "You were correct! +1 to your score!"
             
         else:  
-            self.bot.update_scores(interaction.user.id, -1)
+            self.bot.controller.update_score(interaction.guild.id, interaction.user.id, -1)
             result_string = ": Incorrect"
             response_string = "You were incorrect! -1 to your score!"
         question_dict = self.open_questions[str(interaction.message.id)]
@@ -119,8 +122,6 @@ class TriviaCog(commands.Cog):
             updated_questions[str(new_message.id)]=data
         self.open_questions=updated_questions
         TriviaFileHelper().save_file(self.questions_file, self.open_questions)
-
-    
 
 
 class question_view(discord.ui.View):
