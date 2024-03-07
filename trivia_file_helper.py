@@ -2,9 +2,9 @@ import json
 
 
 class TriviaFileHelper():
-    def save_file(self, sf):
+    def save_file(self, sf, data):
         with open(sf, 'w') as f:
-            json.dump(sf, f)
+            json.dump(data, f)
     
     def load_file(self, sf):
         with open(sf, 'r') as f:

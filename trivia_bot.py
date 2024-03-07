@@ -1,3 +1,4 @@
+#! /usr/bin/env python3
 import discord
 import requests
 import discord.ext
@@ -11,6 +12,7 @@ from trivia_file_helper import TriviaFileHelper
 class TriviaBot(commands.Bot):
     channel = ""
     members = []
+    scores = {}
     scores_file = "scores.json"
     open_questions_file = "questions.json"
 
@@ -21,25 +23,30 @@ class TriviaBot(commands.Bot):
             if channel.name=="trivia-showdown":
                 self.channel = channel
         
-        members = channel.members
-        members.remove(self.user)
-
-        scores = {}
-
-        for member in members:
-            scores[str(member.id)]=0
+        self.members = channel.members
+        self.members.remove(self.user)
+        for member in self.members:
+            self.scores[str(member.id)]=0
         if os.path.isfile(self.scores_file):
             load = TriviaFileHelper().load_file(self.scores_file)
-            for k,v in load.items():
-                scores[k]=v
-        
-        print(scores)
+            if load != {}:
+                for k,v in load.items():
+                    self.scores[k]=v
+            else:
+                TriviaFileHelper().save_file(self.scores_file, self.scores)
+
         
         #await self.sync_tree()
 
     async def set_commands(self):
-        trivia_commands = TriviaCog(self)
-        await trivia_commands.setup()
+        await TriviaCog(self).setup()
+    
+    def get_scores(self):
+        score_str = ""
+        for member in self.members:
+            score_str += member.name
+            score_str += ": " + str(self.scores[str(member.id)]) + "\n"
+        return score_str
 
     async def sync_tree(self):
         print("Syncing...")
@@ -48,6 +55,13 @@ class TriviaBot(commands.Bot):
             print(f"Synced {len(synced)} commands")
         except Exception as e:
             print(e)
+    
+    def get_trivia_channel(self):
+        return self.channel
+    
+    def update_scores(self, user_id, score):
+        self.scores[str(user_id)]+=score
+        TriviaFileHelper().save_file(self.scores_file, self.scores)
 
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
