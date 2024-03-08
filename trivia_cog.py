@@ -204,7 +204,7 @@ class TriviaCog(commands.Cog):
         finally:
             self.controller.close_connection()
         
-    async def edit_question_responses(interaction: discord.Interaction, result_string):
+    def edit_question_responses(self, interaction: discord.Interaction, result_string):
         user_string = interaction.message.content.split("***\n")[0]
         user_string=user_string.replace(interaction.user.name + ": Not answered", interaction.user.name + result_string)
         content = user_string + "***\n" + interaction.message.content.split("***\n")[1]
@@ -349,15 +349,14 @@ Handles button interaction and displaying of answers
 class answer_button(discord.ui.Button):
     def __init__(self, label, correct, difficulty):
         #Parse difficulty
-        match difficulty:
-            case 'easy':
-                self.difficulty = 1
-            case 'medium':
-                self.difficulty = 2
-            case 'hard':
-                self.difficulty = 3
-            case _:
-                self.difficulty = 1
+        if difficulty == "easy":
+            self.difficulty = 1
+        elif difficulty == 'medium':
+            self.difficulty = 2
+        elif difficulty == 'hard':
+            self.difficulty = 3
+        else:
+            self.difficulty = 1
 
         #Store if this answer is correct
         self.correct = correct

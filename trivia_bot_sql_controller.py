@@ -209,21 +209,20 @@ class SQLiteController():
     async def check_if_exists_async(self, table, id, connection: aiosqlite.Connection):
         try:
             if isinstance(id,tuple):
-                match table:
-                    case "channel":
+                if table == "channel":
                         key1 = "id"
                         key2 = "guild_id"
-                    case "message":
+                elif table == "message":
                         key1="id"
                         key2="channel_id"
-                    case "scorecard":
+                elif table == "scorecard":
                         key1="guild_id"
                         key2="user_id"
-                    case "user_answers":
+                elif table == "user_answers":
                         key1="user_id"
                         key2="question_id"
-                    case _:
-                        pass
+                else:
+                    pass
                 
                 result = await connection.execute(f'SELECT 1 FROM {table} WHERE {key1} = ? AND {key2} = ?', id)
             else:
@@ -240,21 +239,20 @@ class SQLiteController():
     def check_if_exists(self, table, id):
 
         if isinstance(id,tuple):
-            match table:
-                case "channel":
+            if table == "channel":
                     key1 = "id"
                     key2 = "guild_id"
-                case "message":
+            elif table == "message":
                     key1="id"
                     key2="channel_id"
-                case "scorecard":
+            elif table == "scorecard":
                     key1="guild_id"
                     key2="user_id"
-                case "user_answers":
+            elif table == "user_answers":
                     key1="user_id"
                     key2="question_id"
-                case _:
-                    pass
+            else:
+                pass
             self.cursor.execute(f'SELECT 1 FROM {table} WHERE {key1} = ? AND {key2} = ?', id)
         else:
             self.cursor.execute(f'SELECT 1 FROM {table} WHERE id = ?', (id,))
