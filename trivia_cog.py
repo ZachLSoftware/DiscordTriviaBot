@@ -2,8 +2,9 @@ import discord
 from discord import ui
 from discord import app_commands
 from discord.ext import commands
-from trivia_file_helper import TriviaFileHelper
+
 from categories_enum import TriviaCategories
+from trivia_bot_sql_controller import SQLiteController
 import copy
 import asyncio
 import html
@@ -14,178 +15,354 @@ class TriviaCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         self.questions_file = "open_questions.json"
-        self.open_questions = TriviaFileHelper().load_file(self.questions_file)
+        self.controller = bot.controller
 
+
+    """
+    :Create a pointer to the bot controller, ensuring it is the right type
+    """
+    @property
+    def controller(self):
+        if not hasattr(self, '_controller'):
+            if isinstance(self.bot.controller, SQLiteController):
+                self._controller = self.bot.controller
+            else:
+                raise AttributeError("Bot controller is not an instance of SQLiteController")
+        return self._controller
+    
+    @controller.setter
+    def controller(self, value):
+        if not isinstance(value, SQLiteController):
+            raise ValueError("Controller must be an instance of SQLiteController")
+        self._controller = value
+
+
+    """
+    :Sets the commands to the bot and refreshes messages so they can be tracked again
+    """
+    async def setup(self) -> None:
+        await self.reset_questions()
+        await self.bot.add_cog(self)
+
+    """
+    :/new-random-question
+    :Listens for the above command and returns a single random question
+    """
     @app_commands.command(name="new-random-question", description="Challenge all to a new random question")
     async def new_random_question(self, interaction: discord.Interaction):
         
-        q = await self.get_question("https://opentdb.com/api.php?amount=1")
-        if q == False:
+        try:
+            #Get Question from opentdb
+            q = await self.get_question("https://opentdb.com/api.php?amount=1")
+            if q == False:
+                await interaction.response.send_message("Error Retrieving Question")
+                return
+            
+            await self.setup_question(interaction, q)
+        except Exception as e:
             await interaction.response.send_message("Error Retrieving Question")
-            return
-
-        await self.setup_question(interaction, q)
-
-    # @app_commands.command(name="clear-channel", description="Clear all messages in the Trivia Channel")
-    # async def clear_channel(self, interaction: discord.Interaction):
-    #     channel=interaction.channel
-    #     if interaction.channel.name!="trivia-showdown":
-    #         return
-    #     history = []
-    #     async for msg in interaction.channel.history(limit=100):
-    #         history.append(msg)
-    #     await interaction.channel.delete_messages(history)
-    #     await channel.send(f"Channel has been cleared by {interaction.user}")
+            print(e)
 
 
+    """
+    :/new-question category
+    :Listens for the command and gets a new question from the category of choice
+    """
     @app_commands.command(name="new-question", description="Challenge all to a new question of the category of your choice")
     @app_commands.describe(categories="Categories to choose from")
     async def new_question(self, interaction: discord.Interaction, categories: TriviaCategories):
-        url = f"https://opentdb.com/api.php?amount=1&category={categories.value}"
-        q = await self.get_question(url)
-        if q == False:
+        try:
+            url = f"https://opentdb.com/api.php?amount=1&category={categories.value}"
+            q = await self.get_question(url)
+            if q == False:
+                await interaction.response.send_message("Error Retrieving Question")
+                return
+            await self.setup_question(interaction, q)
+        except Exception as e:
             await interaction.response.send_message("Error Retrieving Question")
-            return
-        await self.setup_question(interaction, q)
+            print(e)
 
 
+    """
+    :/scoreboard
+    :Listens for the scoreboard command and returns guild scores
+    """
     @app_commands.command(name="scoreboard", description="See the scoreboard")
     async def scoreboard(self, interaction: discord.Interaction):
         await interaction.response.send_message(content=self.bot.get_scores(interaction.guild), ephemeral=False)
 
     async def question_completed(self, interaction: discord.Interaction):
-        # del self.open_questions[str(interaction.message.id)]
-        # TriviaFileHelper().save_file(self.questions_file, self.open_questions)
-        self.bot.controller.delete_question(interaction.message.id)
-        await interaction.channel.send(content=self.bot.get_scores(interaction.guild))
+        try:
+            self.controller.open_connection()
+            self.controller.delete_question(interaction.message.id)
+            self.controller.close_connection()
+            await interaction.channel.send(content=self.bot.get_scores(interaction.guild))
+        except Exception as e:
+            print(e)
+            await interaction.channel.send("There was a problem closing the question")
 
+
+    """
+    :Actual get request for the questions
+    """
     async def get_question(self, url):
         result =  requests.get(url)
-
         if result.json()['response_code']!=0:
             return False
         else:
             return result.json()['results'][0]
         
+    """
+    :Setup method for questions
+    :Accepts the interaction and question
+    :Creates database objects to track open questions
+    :Sends the question to the channel
+    """
     async def setup_question(self, interaction: discord.Interaction, q):
-        members = [member for member in interaction.channel.members if not member.bot]
-        #members = [member for member in interaction.channel.members if member.id==405785308639133696]
-        user_string = "***"
-        for member in members:
-            user_string += member.name + ": Not answered, "
-        user_string=user_string[:-2] + "***\n"
-        await interaction.response.send_message(content=f"@everyone **Category: {q['category']}**\n {user_string}# {html.unescape(q['question'])}",view=question_view(copy.deepcopy(q), members, self.question_completed, self.user_answered), ephemeral=False)
-        msg = await interaction.original_response()
-        self.bot.controller.insert_object("message", ["id", "channel_id"],[msg.id, msg.channel.id], msg.id)
-        question_id=self.bot.controller.insert_object("question_data", ["question", "correct_answer", "category", "difficulty", "message_id"], [q['question'], q['correct_answer'], q['category'], q['difficulty'], msg.id])
-        for incorrect in q['incorrect_answers']:
-            self.bot.controller.insert_object("incorrect_answers", ["label", "question_id"], [incorrect, question_id])
-        for member in members:
-            self.bot.controller.insert_object("user_answers", ["user_id", "question_id"], [member.id, question_id])
+        try:
+            #Get Non-Bot members of the channel
+            members = [member for member in interaction.channel.members if not member.bot]
 
-    async def user_answered(self, interaction: discord.Interaction, correct: bool):
-        if correct: 
-            self.bot.controller.update_score(interaction.guild.id, interaction.user.id, 1)
-            result_string = ": Correct"
-            response_string = "You were correct! +1 to your score!"
-            
-        else:  
-            result_string = ": Incorrect"
-            q_id = self.bot.controller.get_question_id(interaction.guild.id, interaction.channel.id, interaction.message.id)
-            answer= self.bot.controller.get_object("question_data",q_id)['correct_answer']
-            response_string = f"You were incorrect! The correct answer was: {answer}\n Better luck next time!"
-        q_id = self.bot.controller.get_question_id(interaction.guild.id, interaction.channel.id, interaction.message.id)    
-        self.bot.controller.update_object("user_answers", (interaction.user.id, q_id), ["answered", "correct"], [True, correct])
+            #Create user string for tracking answers
+            user_string = "***"
+            for member in members:
+                user_string += member.name + ": Not answered, "
+            user_string=user_string[:-2] + "***\n"
 
-        # question_dict = self.open_questions[str(interaction.message.id)]
-        # question_dict["users"][str(interaction.user.id)][0]=True
-        # question_dict["users"][str(interaction.user.id)][1]=correct
+            try:
+                #Create new question view and send the question and retrieve the msg info from discord
+                await interaction.response.send_message(content=f"@everyone \n **Category: {q['category']} \n Difficulty: {q['difficulty']}**\n {user_string}# {html.unescape(q['question'])}",view=question_view(copy.deepcopy(q), members, self.question_completed, self.user_answered), ephemeral=False)
+                msg = await interaction.original_response()
+            except Exception as e:
+                print("Error sending", e)
+                await interaction.followup.send("Error with question setup. Please try again later.", ephemeral=True)
+                return
+                
+            try:
+                self.controller.open_connection()
+
+                #Insert Message data
+                self.controller.insert_object("message", ["id", "channel_id", "guild_id"],[msg.id, msg.channel.id, msg.guild.id], (msg.id, msg.channel.id))
+
+                #Insert Question Data
+                question_id=self.controller.insert_object("question_data", ["question", "correct_answer", "category", "difficulty", "message_id", "channel_id"], [q['question'], q['correct_answer'], q['category'], q['difficulty'], msg.id, msg.channel.id])
+
+                #Add list to incorrect_answers table
+                for incorrect in q['incorrect_answers']:
+                    self.controller.insert_object("incorrect_answers", ["label", "question_id"], [incorrect, question_id])
+
+                #Add members to track answers
+                for member in members:
+                    self.controller.insert_object("user_answers", ["user_id", "question_id"], [member.id, question_id])
+
+            except Exception as e:
+                print(e)
+                await interaction.followup.send("Error saving question data to database. Deleting question", ephemeral=True)
+                await msg.delete()
+                self.controller.conn.rollback()
+            finally:
+                self.controller.close_connection()
+        except Exception as e:
+            print(e)
 
 
-        # TriviaFileHelper().save_file(self.questions_file, self.open_questions)
+    """
+    :Callback to handle when a user answers a question (button press)
+    """
+    async def user_answered(self, interaction: discord.Interaction, btn, all_answered):
+        try:
+            self.controller.open_connection()
+            correct = btn.correct
+            answer = btn.label
+            difficulty = btn.difficulty
 
+            #If user answers correct, update the score
+            if correct:
+                result_string = ": Correct"
+                response_string = f"You were correct! + {str(difficulty)} to your score!"
+                
+            else:  
+                result_string = ": Incorrect"
+                response_string = f"You were incorrect! The correct answer was: {answer}\n Better luck next time!"
+            try:
+                
+                #Handle updating the open question and update score. If all answered, skip updating question as data will be deleted in a followup callback
+                q_id = self.controller.get_question_id(interaction.guild.id, interaction.channel.id, interaction.message.id) 
+                if not all_answered:
+                    self.controller.update_object("user_answers", (interaction.user.id, q_id), ["answered", "correct"], [True, correct], ("user_id", "question_id"))
+                self.controller.update_score(interaction.guild.id, interaction.user.id, int(correct) * difficulty)
+            except Exception as e:
+                print(e)
+                await interaction.followup.send("Error recording your answer.", ephemeral=True)
 
+            #Edit the message to show status of users for question
+            content = self.edit_question_responses(interaction, result_string)
+            await interaction.message.edit(content=content)
+            await interaction.response.send_message(response_string, ephemeral=True)
+        except Exception as e:
+            print(e)
+        finally:
+            self.controller.close_connection()
+        
+    async def edit_question_responses(interaction: discord.Interaction, result_string):
         user_string = interaction.message.content.split("***\n")[0]
         user_string=user_string.replace(interaction.user.name + ": Not answered", interaction.user.name + result_string)
         content = user_string + "***\n" + interaction.message.content.split("***\n")[1]
-        await interaction.message.edit(content=content)
-        await interaction.response.send_message(response_string, ephemeral=True)
+        return content
         
+    """
+    :Handles recreating messages after bot restart. May need to evaluate if bot use grows as this will be an extensive task
+    :Unsure of how else to help make this faster.
+    """
+    async def reset_questions_back(self):
+        try:
+            #Open database and get a list of open questions across all guilds
+            self.controller.open_connection()
+            open_questions = self.controller.fetch_open_questions()
 
-    async def setup(self) -> None:
-        await self.reset_questions()
-        await self.bot.add_cog(self)
+            #Iterate through guilds
+            for gld, gq in open_questions.items():
+
+                #Iterate through channels
+                for chnl, messages in gq.items():
+
+                    #Iterate through each message
+                    for msg, question in messages.items():
+
+                        #Get actual channel and message from discord
+                        channel = await self.bot.fetch_channel(chnl)
+                        message = await channel.fetch_message(msg)
+
+                        #Recreate members who have not answered the question yet
+                        members = [member for member in channel.members if member!=self.bot.user and member.id in question['user_answers'] and not question['user_answers'][member.id]['answered']]
+
+                        #Recreate view object and send message to channel
+                        new_message = await channel.send(content=message.content, view=question_view(question['question_data'], members, self.question_completed, self.user_answered))
+
+                        #Delete old message and update database to reflect the new message id
+                        await message.delete()
+                        self.controller.update_object("message", (msg, channel.id), ["id"], [new_message.id], ("id", "channel_id"))
+        except Exception as e:
+            print(e)
+        finally:
+            self.controller.close_connection()
 
     async def reset_questions(self):
-        open_questions = self.bot.controller.fetch_open_questions()
-        for gld, gq in open_questions.items():
-            for chnl, messages in gq.items():
-                for msg, question in messages.items():
-                    channel = await self.bot.fetch_channel(chnl)
-                    message = await channel.fetch_message(msg)
-                    members = [member for member in channel.members if member!=self.bot.user and member.id in question['user_answers'] and not question['user_answers'][member.id]['answered']]
-                    new_message = await channel.send(content=message.content, view=question_view(question['question_data'], members, self.question_completed, self.user_answered))
-                    await message.delete()
-                    self.bot.controller.update_object("message", msg, ["id"], [new_message.id])
-                    #self.bot.controller.update_object("question_data", question['question_data']['id'], ["message_id"], [new_message.id])
-        # for msg, data in self.open_questions.items():
-        #     channel = await self.bot.fetch_channel(data["channel_id"])
-        #     message = await channel.fetch_message(msg)
-        #     members = [member for member in channel.members if member!=self.bot.user and (str(member.id) in data["users"] and not data["users"][str(member.id)][0])]
-        #     new_message = await channel.send(content=message.content, view=question_view(data["question"], members, self.question_completed, self.user_answered))
-        #     await message.delete()
-        #     updated_questions[str(new_message.id)]=data
-        # self.open_questions=updated_questions
-        # TriviaFileHelper().save_file(self.questions_file, self.open_questions)
+        try:
+            self.controller.open_connection()
 
+            # Fetch open questions across all guilds
+            open_questions = self.controller.fetch_open_questions()
 
+            # Create tasks for recreating messages in parallel
+            tasks = []
+            for guild_id, guild_questions in open_questions.items():
+                for channel_id, channel_messages in guild_questions.items():
+                    for message_id, question_data in channel_messages.items():
+                        tasks.append(self.recreate_message(guild_id, channel_id, message_id, question_data))
+
+            # Execute tasks concurrently
+            await asyncio.gather(*tasks)
+
+        except Exception as e:
+            print(e)
+        finally:
+            self.controller.close_connection()
+
+    async def recreate_message(self, guild_id, channel_id, message_id, question_data):
+        try:
+            # Get actual channel and message from Discord
+            channel = await self.bot.fetch_channel(channel_id)
+            message = await channel.fetch_message(message_id)
+
+            # Recreate members who have not answered the question yet
+            members = [member for member in channel.members if member != self.bot.user and member.id in question_data['user_answers'] and not question_data['user_answers'][member.id]['answered']]
+
+            # Recreate view object and send message to channel
+            new_message = await channel.send(content=message.content.split("@everyone \n ")[1], view=question_view(question_data['question_data'], members, self.question_completed, self.user_answered))
+
+            # Delete old message and update database to reflect the new message id
+            await message.delete()
+            self.controller.update_object("message", (message_id, channel_id), ["id"], [new_message.id], ("id", "channel_id"))
+        except Exception as e:
+            print(e)
+
+"""
+:Creates a discord view to handle the presentation of questions
+"""
 class question_view(discord.ui.View):
     def __init__(self, question, members, completed_callback, user_callback):
+
+        #Set callbacks
         self.completed_callback=completed_callback
         self.user_callback = user_callback
         self.callback=self.answer_callback
+
+        #set question data and shuffle answers
         self.members = members
         self.question = question['question']
         self.answer = question['correct_answer']
-        self.options = question['incorrect_answers']
+        self.options = question['incorrect_answers'].copy()
         self.options.append(self.answer)
         random.shuffle(self.options)
         super().__init__(timeout=None)
 
+        #Create a button for each answer
         for option in self.options:
-            button = answer_button(label=html.unescape(option), correct=(option==self.answer))
-            #button.callback=self.check_answer
+            button = answer_button(label=html.unescape(option), correct=(option==self.answer), difficulty=question['difficulty'])
             self.add_item(button)
 
-    async def answer_callback(self, interaction: discord.Interaction, correct: bool):
+    """
+    Handles the initial callback
+    """
+    async def answer_callback(self, interaction: discord.Interaction, button):
+
+        #Grab message
         message=interaction.message
+
+        #If the member is not in the list, they have already answered
         if interaction.user not in self.members:
             await interaction.response.send_message("You have already answered this question", ephemeral=True)
             return
-        if correct:
-            await self.user_callback(interaction, True)
+    
+        #Run the main callback
+        await self.user_callback(interaction, button, all_answered=(self.members)==0)
+
+        #Set result string
+        if button.correct:          
             result_string = ": Correct"
-            
         else:
-            await self.user_callback(interaction, False)
             result_string = ": Incorrect"
+
+        #Remove the user from unanswered list
         self.members.remove(interaction.user)
+
+        #Handles if all users answered
         if len(self.members)==0:
             await self.completed_callback(interaction)
-            user_string = interaction.message.content.split("***\n")[0]
-            user_string=user_string.replace(interaction.user.name + ": Not answered", interaction.user.name + result_string)
-            content = user_string + "***\n" + interaction.message.content.split("***\n")[1]
+            content = TriviaCog().edit_question_responses(interaction, result_string)
             await message.edit(content=f"{content} \n ## The correct answer was: {self.answer} \n **Question is now closed.**", view=None)
     
-
-    #async def check_answer(self, interaction: discord.Interaction):
-    #    print(interaction)
-
-
+"""
+Handles button interaction and displaying of answers
+"""
 class answer_button(discord.ui.Button):
-    def __init__(self, label, correct):
+    def __init__(self, label, correct, difficulty):
+        #Parse difficulty
+        match difficulty:
+            case 'easy':
+                self.difficulty = 1
+            case 'medium':
+                self.difficulty = 2
+            case 'hard':
+                self.difficulty = 3
+            case _:
+                self.difficulty = 1
+
+        #Store if this answer is correct
         self.correct = correct
+        
         super().__init__(label=label, style=discord.ButtonStyle.primary)
     async def callback(self, interaction):
         if self.view.callback:
-            await self.view.callback(interaction, self.correct)
+            await self.view.callback(interaction, self)
