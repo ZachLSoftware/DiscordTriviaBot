@@ -9,6 +9,7 @@ class SQLiteController():
             try:
                 self.conn = sqlite3.connect(db)
                 self.cursor = self.conn.cursor()
+                self.conn.execute('PRAGMA foreign_keys = ON')
                 self.initialize_db()
                 print("done")
             except Exception as e:
@@ -48,9 +49,37 @@ class SQLiteController():
             self.cursor.execute(command, parameters)
             self.conn.commit()
 
-    def get_object(self, id):
-        command = '''SELECT * FROM user WHERE id = ?'''
-        parameters = (id)
+    def update_object(self, table, id, columns: list, values: list):
+            set_str=", ".join([f"{column} = ?" for column in columns])
+            
+
+            
+            if isinstance(id, tuple):
+                where_str = "user_id = ? AND question_id = ?"
+                values.extend(id)
+            else:
+                where_str = "id = ?"
+                values.append(id)
+
+            query = f'''UPDATE {table}
+                        SET {set_str}
+                        WHERE {where_str}'''
+            self.cursor.execute(query, values)
+            self.conn.commit()
+
+    def get_question_id(self, guild_id, channel_id, messaged_id):
+        command = '''SELECT q.id
+                    FROM question_data q
+                    JOIN message m ON q.message_id = m.id
+                    JOIN channel c ON m.channel_id = c.id
+                    WHERE m.id = ? AND m.channel_id = ? AND c.guild_id = ?;
+                     '''
+        row = self.cursor.execute(command, (messaged_id, channel_id, guild_id)).fetchone()
+        return row[0]
+
+    def get_object(self, table, id):
+        command = f'''SELECT * FROM {table} WHERE id = ?'''
+        parameters = (id,)
 
         try:
             self.cursor.execute(command, parameters)
@@ -65,15 +94,18 @@ class SQLiteController():
             return None
         
     def insert_object(self, table: str, columns: list, values: list, id=None):
-        if (id is None or not self.check_if_exists(table, id)):
-            column_names = ', '.join(columns)
-            placeholders = ', '.join(['?' for _ in values])
+        try:
+            if (id is None or not self.check_if_exists(table, id)):
+                column_names = ', '.join(columns)
+                placeholders = ', '.join(['?' for _ in values])
 
-            command = f"INSERT INTO {table} ({column_names}) VALUES ({placeholders})"
-            self.cursor.execute(command, values)
-            self.conn.commit()
-            last_inserted_id = self.cursor.lastrowid
-            return last_inserted_id
+                command = f"INSERT INTO {table} ({column_names}) VALUES ({placeholders})"
+                self.cursor.execute(command, values)
+                self.conn.commit()
+                last_inserted_id = self.cursor.lastrowid
+                return last_inserted_id
+        except Exception as e:
+            print(e)
 
     def check_if_exists(self, table, id):
         if isinstance(id,tuple):
@@ -82,52 +114,67 @@ class SQLiteController():
             self.cursor.execute(f'SELECT 1 FROM {table} WHERE id = ?', (id,))
         return self.cursor.fetchone() is not None
     
+    def delete_question(self, message_id):
+        command = '''DELETE FROM message WHERE id = ?'''
+        self.cursor.execute(command, (message_id,))
+        self.conn.commit()
+    
     def fetch_open_questions(self):
         query = '''
             SELECT
+                g.id AS guild_id,
+                c.id AS channel_id,
                 m.id AS message_id,
-                q.content AS question_content,
-                q.answer AS question_answer,
-                q.category AS question_category,
-                q.difficulty AS question_difficulty,
-                w.label AS wrong_answer_label,
-                ua.user_id AS user_id,
-                ua.answered AS user_answered,
-                ua.correct AS user_correct,
-                m.channel_id AS channel_id
+                q.id AS question_data_id,
+                q.question AS question_data_question,
+                q.correct_answer AS question_data_answer,
+                q.category AS question_data_category,
+                q.difficulty AS question_data_difficulty
+                
             FROM
                 message m
-                INNER JOIN question q ON m.id = q.message_id
-                LEFT JOIN wrong_answers w ON q.id = w.question_id
-                LEFT JOIN user_answers ua ON q.id = ua.question_id
+                INNER JOIN channel c ON m.channel_id = c.id
+                INNER JOIN guild g ON c.guild_id = g.id
+                INNER JOIN question_data q ON m.id = q.message_id
         '''
+
         self.cursor.execute(query)
         result = self.cursor.fetchall()
 
-        messages_data = {}
+        guilds_data = {}
         for row in result:
-            message_id = row[0]  # accessing tuple element by index
-            if message_id not in messages_data:
-                messages_data[message_id] = {
-                    'question': {
-                        'content': row[1],
-                        'answer': row[2],
-                        'category': row[3],
-                        'difficulty': row[4]
+            guild_id = row[0]
+            channel_id = row[1]
+            message_id = row[2]
+            question_id = row[3]
+
+            if guild_id not in guilds_data:
+                guilds_data[guild_id] = {}
+
+            if channel_id not in guilds_data[guild_id]:
+                guilds_data[guild_id][channel_id] = {}
+
+            if message_id not in guilds_data[guild_id][channel_id]:
+                guilds_data[guild_id][channel_id][message_id] = {
+                    'question_data': {
+                        'id': row[3],
+                        'question': row[4],
+                        'correct_answer': row[5],
+                        'category': row[6],
+                        'difficulty': row[7],
+                        'incorrect_answers': []
                     },
-                    'wrong_answers': [],
                     'user_answers': {}
                 }
 
-            if row[5] is not None:  # Check for NULL value
-                messages_data[message_id]['wrong_answers'].append(row[5])
+            incorrect_answers = self.cursor.execute("select label from incorrect_answers where question_id = ?", (question_id,)).fetchall()
+            for answer in incorrect_answers:
+                guilds_data[guild_id][channel_id][message_id]['question_data']['incorrect_answers'].append(answer[0])
+            
+            user_answers = self.cursor.execute("select user_id, answered, correct from user_answers where question_id = ?", (question_id,)).fetchall()
+            for ua in user_answers:
+                guilds_data[guild_id][channel_id][message_id]['user_answers'][ua[0]] = {"answered": bool(ua[1]), "correct": bool(ua[2])}
 
-            if row[6] is not None:  # Check for NULL value
-                messages_data[message_id]['user_answers'][row[6]] = {
-                    'answered': row[7],
-                    'correct': row[8]
-                }
-
-        return messages_data
+        return guilds_data
 
 #sql=SQLiteController()

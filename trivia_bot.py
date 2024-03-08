@@ -12,13 +12,11 @@ from trivia_bot_sql_controller import SQLiteController
 
 class TriviaBot(commands.Bot):
     channel = ""
-    members = []
-    scores = {}
     scores_file = "scores.json"
     open_questions_file = "questions.json"
 
     async def on_ready(self):
-        self.controller = SQLiteController("test.sqlite")
+        self.controller = SQLiteController("trivia_bot_db.sqlite")
         await self.set_commands()
         print(f'{self.user} has connected to Discord!')
         await self.insert_guild_data()
@@ -47,15 +45,15 @@ class TriviaBot(commands.Bot):
         for guild in self.guilds:
             self.controller.insert_object("guild", ["id", "guild_name"], [guild.id, guild.name], guild.id)
             for member in guild.members:
-                if member == self.user:
+                if member == self.user or member.bot:
                     continue
                 self.controller.insert_object("user", ["id", "username"], [member.id, member.name], member.id)
                 self.controller.insert_object("scorecard", ["guild_id", "user_id"], [guild.id, member.id], (guild.id, member.id))
-        for channel in self.get_all_channels():
-            if channel.type == discord.ChannelType.text:
-                is_allowed = await self.is_bot_allowed(channel)
-                if is_allowed and channel.name!="general":
-                    self.controller.insert_object("channel", ["id", "channel_name"], [channel.id, channel.name], channel.id)
+            for channel in guild.channels:
+                if channel.type == discord.ChannelType.text:
+                    is_allowed = await self.is_bot_allowed(channel)
+                    if is_allowed and channel.name!="general":
+                        self.controller.insert_object("channel", ["id", "channel_name", "guild_id"], [channel.id, channel.name, channel.guild.id], channel.id)
 
 
     async def is_bot_allowed(self, channel):
@@ -70,7 +68,7 @@ class TriviaBot(commands.Bot):
     def get_scores(self, guild: discord.Guild):
         score_str = ""
         for member in guild.members:
-            if member == self.user:
+            if member == self.user or member.bot:
                 continue
             score_str += member.name + ":   "
             score_str += str(self.controller.get_score(guild.id, member.id)['score']) +"\n"
@@ -94,7 +92,7 @@ class TriviaBot(commands.Bot):
         
 
 load_dotenv()
-TOKEN = os.getenv("TEST_TOKEN")
+TOKEN = os.getenv("TOKEN")
 intents = discord.Intents.default()
 intents.message_content=True
 intents.guilds = True
