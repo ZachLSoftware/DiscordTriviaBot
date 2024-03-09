@@ -8,23 +8,20 @@ from trivia_cog import TriviaCog
 import os
 from trivia_file_helper import TriviaFileHelper
 from trivia_bot_sql_controller import SQLiteController
+from trivia_event_listener_cog import EventManagementCog
 
 
 class TriviaBot(commands.Bot):
-    channel = ""
-    scores_file = "scores.json"
-    open_questions_file = "questions.json"
-
     """
     :When bot connects, create sqlite connection
     :Setup the trivia commands
     :Insert data from each guild (Checks in place to not try to re-insert data)
     """
     async def on_ready(self):
-        self.controller = SQLiteController("trivia_bot_db.sqlite")
+        self.controller = SQLiteController("test.sqlite")
         await self.set_commands()
         print(f'{self.user} has connected to Discord!')
-        await self.insert_guild_data()
+        await self.insert_guild_data(self.guilds)
 
 
     """
@@ -35,12 +32,12 @@ class TriviaBot(commands.Bot):
     -Insert into channels
     :The SQL controller will check if the object exists before trying to insert
     """
-    async def insert_guild_data(self):
+    async def insert_guild_data(self, guilds):
         #Insert data into database if it doesn't exist
         #Iterate through guilds
         connection = await self.controller.start_sync_inserts()
         try:
-            for guild in self.guilds:
+            for guild in guilds:
 
                 #Insert Guild
                 await self.controller.insert_object_async("guild", ["id", "guild_name"], [guild.id, guild.name], connection, guild.id)
@@ -52,7 +49,7 @@ class TriviaBot(commands.Bot):
 
                     #Insert user and create scorecard
                     await self.controller.insert_object_async("user", ["id", "username"], [member.id, member.name], connection, member.id)
-                    await self.controller.insert_object_async("scorecard", ["guild_id", "user_id"], [guild.id, member.id], connection, (guild.id, member.id))
+                    
                 
                 #Interate through allowed channels
                 for channel in guild.channels:
@@ -60,6 +57,15 @@ class TriviaBot(commands.Bot):
                         is_allowed = await self.is_bot_allowed(channel)
                         if is_allowed and channel.name!="general":
                             await self.controller.insert_object_async("channel", ["id", "channel_name", "guild_id"], [channel.id, channel.name, channel.guild.id], connection, channel.id)
+                for channel in guild.channels:
+                    if channel.type == discord.ChannelType.text:
+                        is_allowed = await self.is_bot_allowed(channel)
+                        if is_allowed and channel.name!="general":
+                            for member in channel.members:
+                                if member.bot:
+                                    continue
+                                await self.controller.insert_object_async("scorecard", ["user_id", "channel_id","guild_id"], [member.id, channel.id, guild.id], connection, (member.id, channel.id))
+
         except Exception as e:
             print(e)
         finally:
@@ -76,26 +82,33 @@ class TriviaBot(commands.Bot):
             return permissions.send_messages
         return False
     
+    async def is_user_allowed(self, channel: discord.TextChannel, user_id: int):
+        member = channel.guild.get_member(user_id)
+        if member:
+            permissions = channel.permissions_for(member)
+            return permissions.send_messages
+        return False
     """
     :Calls the cogs setup function
     """
     async def set_commands(self):
+        await EventManagementCog(self).setup()
         await TriviaCog(self).setup()
     
     """
     :Get score for the guild and match them with members
     """
-    def get_scores(self, guild: discord.Guild):
+    def get_scores(self, channel: discord.TextChannel):
         try:
             self.controller.open_connection()
             #string builder
             score_str = ""
 
             #Guild Scores
-            scores = self.controller.get_guild_scores(guild.id)
+            scores = self.controller.get_channel_scores(channel.id)
 
             #Add scores to string
-            for member in guild.members:
+            for member in channel.members:
                 if member == self.user or member.bot:
                     continue
                 score_str += member.name + ":   "
@@ -119,11 +132,10 @@ class TriviaBot(commands.Bot):
             print(f"Synced {len(synced)} commands")
         except Exception as e:
             print(e)
-
         
 
 load_dotenv()
-TOKEN = os.getenv("TOKEN")
+TOKEN = os.getenv("TEST_TOKEN")
 intents = discord.Intents.default()
 intents.message_content=True
 intents.guilds = True

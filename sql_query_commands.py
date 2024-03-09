@@ -22,12 +22,13 @@ def initialize(connection: sqlite3.Connection):
         )''',
         '''CREATE TABLE IF NOT EXISTS scorecard
         (
-            guild_id INTEGER NOT NULL,
             user_id INTEGER NOT NULL,
+            channel_id INTEGER NOT NULL,
+            guild_id INTEGER NOT NULL,
             score INTEGER DEFAULT 0,
-            PRIMARY KEY (guild_id, user_id),
-            FOREIGN KEY(guild_id) REFERENCES guild(id) ON DELETE CASCADE,
-            FOREIGN KEY(user_id) REFERENCES user(id) ON DELETE CASCADE
+            PRIMARY KEY (user_id, channel_id),
+            FOREIGN KEY(user_id) REFERENCES user(id) ON DELETE CASCADE,
+            FOREIGN KEY(channel_id, guild_id) REFERENCES channel(id, guild_id) ON DELETE CASCADE
         )''',
         '''CREATE TABLE IF NOT EXISTS message
         (

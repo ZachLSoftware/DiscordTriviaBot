@@ -89,14 +89,16 @@ class TriviaCog(commands.Cog):
     """
     @app_commands.command(name="scoreboard", description="See the scoreboard")
     async def scoreboard(self, interaction: discord.Interaction):
-        await interaction.response.send_message(content=self.bot.get_scores(interaction.guild), ephemeral=False)
+        await interaction.response.send_message(content=self.bot.get_scores(interaction.channel), ephemeral=False)
 
-    async def question_completed(self, interaction: discord.Interaction):
+    async def question_completed(self, interaction: discord.Interaction, result_string, answer):
         try:
             self.controller.open_connection()
             self.controller.delete_question(interaction.message.id)
             self.controller.close_connection()
-            await interaction.channel.send(content=self.bot.get_scores(interaction.guild))
+            content = self.edit_question_responses(interaction, result_string)
+            await interaction.message.edit(content=f"{content} \n ## The correct answer was: {answer} \n **Question is now closed.**", view=None)
+            await interaction.followup.send(content=self.bot.get_scores(interaction.channel))
         except Exception as e:
             print(e)
             await interaction.channel.send("There was a problem closing the question")
@@ -131,11 +133,12 @@ class TriviaCog(commands.Cog):
 
             try:
                 #Create new question view and send the question and retrieve the msg info from discord
-                await interaction.response.send_message(content=f"@everyone \n **Category: {q['category']} \n Difficulty: {q['difficulty']}**\n {user_string}# {html.unescape(q['question'])}",view=question_view(copy.deepcopy(q), members, self.question_completed, self.user_answered), ephemeral=False)
+                await interaction.response.defer()
+                test = await interaction.followup.send(content=f"@everyone \n **Category: {html.unescape(q['category'])} \n Difficulty: {q['difficulty']}**\n {user_string}# {html.unescape(q['question'])}",view=question_view(copy.deepcopy(q), members, self.question_completed, self.user_answered), ephemeral=False)
                 msg = await interaction.original_response()
             except Exception as e:
                 print("Error sending", e)
-                await interaction.followup.send("Error with question setup. Please try again later.", ephemeral=True)
+                await interaction.followup.send("Error with question setup. Please try again later." + e, ephemeral=True)
                 return
                 
             try:
@@ -179,18 +182,18 @@ class TriviaCog(commands.Cog):
             #If user answers correct, update the score
             if correct:
                 result_string = ": Correct"
-                response_string = f"You were correct! + {str(difficulty)} to your score!"
+                response_string = f"You were correct! +1 to your score!"
                 
             else:  
                 result_string = ": Incorrect"
-                response_string = f"You were incorrect! The correct answer was: {answer}\n Better luck next time!"
+                response_string = f"You were incorrect! -1 to your score! The correct answer was: {answer}\n Better luck next time!"
             try:
                 
                 #Handle updating the open question and update score. If all answered, skip updating question as data will be deleted in a followup callback
                 q_id = self.controller.get_question_id(interaction.guild.id, interaction.channel.id, interaction.message.id) 
                 if not all_answered:
                     self.controller.update_object("user_answers", (interaction.user.id, q_id), ["answered", "correct"], [True, correct], ("user_id", "question_id"))
-                self.controller.update_score(interaction.guild.id, interaction.user.id, int(correct) * difficulty)
+                self.controller.update_score(interaction.guild.id, interaction.user.id, 1 if correct else -1)
             except Exception as e:
                 print(e)
                 await interaction.followup.send("Error recording your answer.", ephemeral=True)
@@ -279,7 +282,11 @@ class TriviaCog(commands.Cog):
             members = [member for member in channel.members if member != self.bot.user and member.id in question_data['user_answers'] and not question_data['user_answers'][member.id]['answered']]
 
             # Recreate view object and send message to channel
-            new_message = await channel.send(content=message.content.split("@everyone \n ")[1], view=question_view(question_data['question_data'], members, self.question_completed, self.user_answered))
+            if "@everyone" in message.content:
+                content = message.content.split("@everyone \n ")[1]
+            else:
+                content = message.content
+            new_message = await channel.send(content=content, view=question_view(question_data['question_data'], members, self.question_completed, self.user_answered))
 
             # Delete old message and update database to reflect the new message id
             await message.delete()
@@ -316,10 +323,6 @@ class question_view(discord.ui.View):
     Handles the initial callback
     """
     async def answer_callback(self, interaction: discord.Interaction, button):
-
-        #Grab message
-        message=interaction.message
-
         #If the member is not in the list, they have already answered
         if interaction.user not in self.members:
             await interaction.response.send_message("You have already answered this question", ephemeral=True)
@@ -339,9 +342,8 @@ class question_view(discord.ui.View):
 
         #Handles if all users answered
         if len(self.members)==0:
-            await self.completed_callback(interaction)
-            content = TriviaCog().edit_question_responses(interaction, result_string)
-            await message.edit(content=f"{content} \n ## The correct answer was: {self.answer} \n **Question is now closed.**", view=None)
+            await self.completed_callback(interaction, result_string, self.answer)
+            
     
 """
 Handles button interaction and displaying of answers

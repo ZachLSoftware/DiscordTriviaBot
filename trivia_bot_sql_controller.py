@@ -63,10 +63,10 @@ class SQLiteController():
     """
     :Get the guild scores
     """
-    def get_guild_scores(self, guild_id):
+    def get_channel_scores(self, channel_id):
         try:
-            command="""SELECT * FROM scorecard WHERE guild_id = ?"""
-            self.cursor.execute(command, (guild_id,))
+            command="""SELECT * FROM scorecard WHERE channel_id = ?"""
+            self.cursor.execute(command, (channel_id,))
             scores = {}
             rows = self.cursor.fetchall()
             for row in rows:
@@ -216,8 +216,8 @@ class SQLiteController():
                         key1="id"
                         key2="channel_id"
                 elif table == "scorecard":
-                        key1="guild_id"
-                        key2="user_id"
+                        key1="user_id"
+                        key2="channel_id"
                 elif table == "user_answers":
                         key1="user_id"
                         key2="question_id"
@@ -246,8 +246,8 @@ class SQLiteController():
                     key1="id"
                     key2="channel_id"
             elif table == "scorecard":
-                    key1="guild_id"
-                    key2="user_id"
+                    key1="user_id"
+                    key2="channel_id"
             elif table == "user_answers":
                     key1="user_id"
                     key2="question_id"
@@ -265,7 +265,30 @@ class SQLiteController():
     def delete_question(self, message_id):
         command = '''DELETE FROM message WHERE id = ?'''
         self.cursor.execute(command, (message_id,))
+
+    def delete_object(self, table, id, id_columns=None):
+        if id_columns is not None:
+             where_str = " AND ".join([f"{id_column} = ?" for id_column in id_columns])
+        else:
+             where_str = "id = ?"
+             id = (id,)
+        query = f"DELETE FROM {table} WHERE {where_str}"
+
+        # Execute the query with parameterized values
+        self.cursor.execute(query, id)
+
+        rows_affected = self.cursor.rowcount
+
+        return rows_affected
     
+    def user_remove_check(self):
+         query = "SELECT id FROM user"
+         self.cursor.execute(query)
+         user_ids = self.cursor.fetchall()
+         for id in user_ids:
+              self.cursor.execute("SELECT * FROM scorecard WHERE user_id = ?", id)
+              if self.cursor.fetchone() is None:
+                   self.delete_object("user", id[0])
 
     """
     :Fetch all open questions
