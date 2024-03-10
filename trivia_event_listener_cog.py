@@ -36,7 +36,9 @@ class EventManagementCog(commands.Cog):
     @commands.Cog.listener()
     async def on_guild_join(self, guild):
         await self.bot.insert_guild_data([guild])
+        self.controller.open_connection()
         self.controller.user_remove_check()
+        self.controller.close_connection()
 
     @commands.Cog.listener()
     async def on_guild_remove(self, guild):

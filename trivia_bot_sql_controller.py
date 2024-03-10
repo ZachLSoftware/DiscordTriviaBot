@@ -2,6 +2,7 @@ import sqlite3
 import aiosqlite
 import os
 from sql_query_commands import *
+import inspect
 
 class SQLiteController():
     
@@ -15,6 +16,8 @@ class SQLiteController():
                 self.conn.execute('PRAGMA foreign_keys = ON')
                 self.initialize_db()
                 self.conn.close()
+                self.is_open = False
+                self.initial_caller = None
                 print("done")
             except Exception as e:
                 print(e)
@@ -28,16 +31,23 @@ class SQLiteController():
     :Handle opening database and setting foreign-keys
     """
     def open_connection(self):
-        self.conn = sqlite3.connect(self.db)
-        self.conn.execute('PRAGMA foreign_keys = ON')
-        self.cursor = self.conn.cursor()
-    
-    """
-    :Commit and close the database
-    """
+        caller = inspect.currentframe().f_back.f_code.co_name
+        if self.initial_caller is None:
+            self.initial_caller = caller
+        if not self.is_open:
+            self.conn = sqlite3.connect(self.db)
+            self.conn.execute('PRAGMA foreign_keys = ON')
+            self.cursor = self.conn.cursor()
+            self.is_open = True
+
     def close_connection(self):
-        self.conn.commit()
-        self.conn.close()
+        caller = inspect.currentframe().f_back.f_code.co_name
+        if caller == self.initial_caller:
+            self.conn.commit()
+            self.conn.close()
+            self.initial_caller = None
+            self.is_open = False
+        self.is_open = False
 
 
     """
@@ -102,20 +112,25 @@ class SQLiteController():
     :Needs a table name, ID, columns to update, values for columns, and if composite key, id_columns
     """
     def update_object(self, table, id, columns: list, values: list, id_columns: tuple = None):
-            set_str=", ".join([f"{column} = ?" for column in columns])
-            
-            
-            if isinstance(id, tuple):
-                where_str = " AND ".join([f"{id_column} = ?" for id_column in id_columns])
-                values.extend(id)
-            else:
-                where_str = "id = ?"
-                values.append(id)
+            try:
+                set_str=", ".join([f"{column} = ?" for column in columns])
+                
+                
+                if isinstance(id, tuple):
+                    where_str = " AND ".join([f"{id_column} = ?" for id_column in id_columns])
+                    values.extend(id)
+                else:
+                    where_str = "id = ?"
+                    values.append(id)
 
-            query = f'''UPDATE {table}
-                        SET {set_str}
-                        WHERE {where_str}'''
-            self.cursor.execute(query, values)
+                query = f'''UPDATE {table}
+                            SET {set_str}
+                            WHERE {where_str}'''
+                self.cursor.execute(query, values)
+            except Exception as e:
+                 print(e)
+            
+
 
     def get_question_id(self, guild_id, channel_id, messaged_id):
         command = '''SELECT q.id
@@ -282,18 +297,19 @@ class SQLiteController():
         return rows_affected
     
     def user_remove_check(self):
-         query = "SELECT id FROM user"
-         self.cursor.execute(query)
-         user_ids = self.cursor.fetchall()
-         for id in user_ids:
-              self.cursor.execute("SELECT * FROM scorecard WHERE user_id = ?", id)
-              if self.cursor.fetchone() is None:
-                   self.delete_object("user", id[0])
+        query = "SELECT id FROM user"
+        self.cursor.execute(query)
+        user_ids = self.cursor.fetchall()
+        for id in user_ids:
+            self.cursor.execute("SELECT * FROM scorecard WHERE user_id = ?", id)
+            if self.cursor.fetchone() is None:
+                self.delete_object("user", id[0])
 
     """
     :Fetch all open questions
     """
-    def fetch_open_questions(self):
+    def fetch_open_questions(self, channel_refresh=None):
+         
         query = '''
             SELECT
                 g.id AS guild_id,
@@ -312,7 +328,11 @@ class SQLiteController():
                 INNER JOIN question_data q ON m.id = q.message_id
         '''
 
-        self.cursor.execute(query)
+        if channel_refresh is not None:
+             query += "\nWHERE c.id = ?"
+             self.cursor.execute(query, (channel_refresh.id,))
+        else:
+            self.cursor.execute(query)
         result = self.cursor.fetchall()
 
         guilds_data = {}

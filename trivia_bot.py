@@ -1,4 +1,4 @@
-#! /usr/bin/env python3
+
 import discord
 import requests
 import discord.ext
@@ -6,7 +6,6 @@ from discord.ext import commands
 from dotenv import load_dotenv
 from trivia_cog import TriviaCog
 import os
-from trivia_file_helper import TriviaFileHelper
 from trivia_bot_sql_controller import SQLiteController
 from trivia_event_listener_cog import EventManagementCog
 
@@ -18,7 +17,7 @@ class TriviaBot(commands.Bot):
     :Insert data from each guild (Checks in place to not try to re-insert data)
     """
     async def on_ready(self):
-        self.controller = SQLiteController("test.sqlite")
+        self.controller = SQLiteController("trivia_bot_db.sqlite")
         await self.set_commands()
         print(f'{self.user} has connected to Discord!')
         await self.insert_guild_data(self.guilds)
@@ -135,7 +134,7 @@ class TriviaBot(commands.Bot):
         
 
 load_dotenv()
-TOKEN = os.getenv("TEST_TOKEN")
+TOKEN = os.getenv("TOKEN")
 intents = discord.Intents.default()
 intents.message_content=True
 intents.guilds = True

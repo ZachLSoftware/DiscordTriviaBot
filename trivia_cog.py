@@ -172,11 +172,10 @@ class TriviaCog(commands.Cog):
     """
     :Callback to handle when a user answers a question (button press)
     """
-    async def user_answered(self, interaction: discord.Interaction, btn, all_answered):
+    async def user_answered(self, interaction: discord.Interaction, btn, answer, all_answered):
         try:
             self.controller.open_connection()
             correct = btn.correct
-            answer = btn.label
             difficulty = btn.difficulty
 
             #If user answers correct, update the score
@@ -213,16 +212,26 @@ class TriviaCog(commands.Cog):
         content = user_string + "***\n" + interaction.message.content.split("***\n")[1]
         return content
         
+
+    @app_commands.command(name="refresh-questions", description="Refresh questions")
+    async def refresh(self, interaction: discord.Interaction):
+        try:
+            await interaction.response.defer()
+            await interaction.followup.send("Refreshing....", ephemeral=True)
+            await self.reset_questions_back(interaction.channel)
+        except Exception as e:
+            print(e)
+            await interaction.followup.send("Cannot refresh questions", ephemeral=True)
     """
     :Handles recreating messages after bot restart. May need to evaluate if bot use grows as this will be an extensive task
     :Unsure of how else to help make this faster.
     """
-    async def reset_questions_back(self):
+    async def reset_questions_back(self, channel_refresh=None):
         try:
             #Open database and get a list of open questions across all guilds
             self.controller.open_connection()
-            open_questions = self.controller.fetch_open_questions()
-
+            open_questions = self.controller.fetch_open_questions(channel_refresh)
+            
             #Iterate through guilds
             for gld, gq in open_questions.items():
 
@@ -243,8 +252,8 @@ class TriviaCog(commands.Cog):
                         new_message = await channel.send(content=message.content, view=question_view(question['question_data'], members, self.question_completed, self.user_answered))
 
                         #Delete old message and update database to reflect the new message id
-                        await message.delete()
                         self.controller.update_object("message", (msg, channel.id), ["id"], [new_message.id], ("id", "channel_id"))
+                        await message.delete()
         except Exception as e:
             print(e)
         finally:
@@ -289,8 +298,8 @@ class TriviaCog(commands.Cog):
             new_message = await channel.send(content=content, view=question_view(question_data['question_data'], members, self.question_completed, self.user_answered))
 
             # Delete old message and update database to reflect the new message id
-            await message.delete()
             self.controller.update_object("message", (message_id, channel_id), ["id"], [new_message.id], ("id", "channel_id"))
+            await message.delete()
         except Exception as e:
             print(e)
 
@@ -329,7 +338,7 @@ class question_view(discord.ui.View):
             return
     
         #Run the main callback
-        await self.user_callback(interaction, button, all_answered=(self.members)==0)
+        await self.user_callback(interaction, button, self.answer, all_answered=(self.members)==0)
 
         #Set result string
         if button.correct:          
