@@ -1,10 +1,9 @@
 import discord
-from discord import ui
 from discord import app_commands
 from discord.ext import commands
-
 from categories_enum import TriviaCategories
 from trivia_bot_sql_controller import SQLiteController
+from log_to_file import *
 import copy
 import asyncio
 import html
@@ -61,7 +60,7 @@ class TriviaCog(commands.Cog):
             await self.setup_question(interaction, q)
         except Exception as e:
             await interaction.response.send_message("Error Retrieving Question")
-            print(e)
+            log_error(e)
 
 
     """
@@ -80,7 +79,7 @@ class TriviaCog(commands.Cog):
             await self.setup_question(interaction, q)
         except Exception as e:
             await interaction.response.send_message("Error Retrieving Question")
-            print(e)
+            log_error(e)
 
 
     """
@@ -98,9 +97,9 @@ class TriviaCog(commands.Cog):
             self.controller.close_connection()
             content = self.edit_question_responses(interaction, result_string)
             await interaction.message.edit(content=f"{content} \n ## The correct answer was: {answer} \n **Question is now closed.**", view=None)
-            await interaction.followup.send(content=self.bot.get_scores(interaction.channel))
+            #await interaction.followup.send(content=self.bot.get_scores(interaction.channel))
         except Exception as e:
-            print(e)
+            log_error(e)
             await interaction.channel.send("There was a problem closing the question")
 
 
@@ -137,7 +136,7 @@ class TriviaCog(commands.Cog):
                 test = await interaction.followup.send(content=f"@everyone \n **Category: {html.unescape(q['category'])} \n Difficulty: {q['difficulty']}**\n {user_string}# {html.unescape(q['question'])}",view=question_view(copy.deepcopy(q), members, self.question_completed, self.user_answered), ephemeral=False)
                 msg = await interaction.original_response()
             except Exception as e:
-                print("Error sending", e)
+                log("Error sending", e)
                 await interaction.followup.send("Error with question setup. Please try again later." + e, ephemeral=True)
                 return
                 
@@ -159,14 +158,14 @@ class TriviaCog(commands.Cog):
                     self.controller.insert_object("user_answers", ["user_id", "question_id"], [member.id, question_id])
 
             except Exception as e:
-                print(e)
+                log_error(e)
                 await interaction.followup.send("Error saving question data to database. Deleting question", ephemeral=True)
                 await msg.delete()
                 self.controller.conn.rollback()
             finally:
                 self.controller.close_connection()
         except Exception as e:
-            print(e)
+            log_error(e)
 
 
     """
@@ -194,7 +193,7 @@ class TriviaCog(commands.Cog):
                     self.controller.update_object("user_answers", (interaction.user.id, q_id), ["answered", "correct"], [True, correct], ("user_id", "question_id"))
                 self.controller.update_score(interaction.guild.id, interaction.user.id, 1 if correct else -1)
             except Exception as e:
-                print(e)
+                log_error(e)
                 await interaction.followup.send("Error recording your answer.", ephemeral=True)
 
             #Edit the message to show status of users for question
@@ -202,7 +201,7 @@ class TriviaCog(commands.Cog):
             await interaction.message.edit(content=content)
             await interaction.response.send_message(response_string, ephemeral=True)
         except Exception as e:
-            print(e)
+            log_error(e)
         finally:
             self.controller.close_connection()
         
@@ -220,7 +219,7 @@ class TriviaCog(commands.Cog):
             await interaction.followup.send("Refreshing....", ephemeral=True)
             await self.reset_questions_back(interaction.channel)
         except Exception as e:
-            print(e)
+            log_error(e)
             await interaction.followup.send("Cannot refresh questions", ephemeral=True)
     """
     :Handles recreating messages after bot restart. May need to evaluate if bot use grows as this will be an extensive task
@@ -255,7 +254,7 @@ class TriviaCog(commands.Cog):
                         self.controller.update_object("message", (msg, channel.id), ["id"], [new_message.id], ("id", "channel_id"))
                         await message.delete()
         except Exception as e:
-            print(e)
+            log_error(e)
         finally:
             self.controller.close_connection()
 
@@ -277,7 +276,7 @@ class TriviaCog(commands.Cog):
             await asyncio.gather(*tasks)
 
         except Exception as e:
-            print(e)
+            log_error(e)
         finally:
             self.controller.close_connection()
 
@@ -301,7 +300,7 @@ class TriviaCog(commands.Cog):
             self.controller.update_object("message", (message_id, channel_id), ["id"], [new_message.id], ("id", "channel_id"))
             await message.delete()
         except Exception as e:
-            print(e)
+            log_error(e)
 
 """
 :Creates a discord view to handle the presentation of questions

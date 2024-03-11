@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 from trivia_bot_sql_controller import SQLiteController
 import asyncio
+from log_to_file import *
 
 class EventManagementCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -48,7 +49,7 @@ class EventManagementCog(commands.Cog):
             await asyncio.sleep(1)
             self.controller.user_remove_check()
         except Exception as e:
-            print(e)
+            log_error(e)
         finally:
             self.controller.close_connection()
 
@@ -97,7 +98,7 @@ class EventManagementCog(commands.Cog):
                     if not member.bot:
                         await self.check_permission_change(after, member)
         except Exception as e:
-            print(e)
+            log_error(e)
         finally:
             self.controller.close_connection()
 
@@ -111,7 +112,7 @@ class EventManagementCog(commands.Cog):
                     self.controller.insert_object("scorecard", ["user_id", "channel_id","guild_id"], [member.id, channel.id, channel.guild.id], (member.id, channel.id))
          
         except Exception as e:
-            print(e)
+            log_error(e)
         finally:
             self.controller.close_connection()
 
@@ -121,7 +122,7 @@ class EventManagementCog(commands.Cog):
             self.controller.open_connection()
             self.controller.delete_object("user", member.id)
         except Exception as e:
-            print(e)
+            log_error(e)
         finally:
             self.controller.close_connection()
 
@@ -144,7 +145,7 @@ class EventManagementCog(commands.Cog):
                 self.controller.insert_object("scorecard", ["user_id", "channel_id", "guild_id"], [member.id, channel.id, member.guild.id])
 
         except Exception as e:
-            print(e)
+            log_error(e)
 
     @commands.Cog.listener()
     async def on_message_delete(self, message: discord.Message):
@@ -152,6 +153,6 @@ class EventManagementCog(commands.Cog):
             self.controller.open_connection()
             self.controller.delete_object("message", (message.id, message.channel.id), ["id", "channel_id"])
         except Exception as e:
-            print(e)
+            log_error(e)
         finally:
             self.controller.close_connection()

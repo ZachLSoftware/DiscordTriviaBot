@@ -1,11 +1,11 @@
-
+#!/usr/bin/env python3
 import discord
-import requests
 import discord.ext
 from discord.ext import commands
 from dotenv import load_dotenv
 from trivia_cog import TriviaCog
 import os
+from log_to_file import *
 from trivia_bot_sql_controller import SQLiteController
 from trivia_event_listener_cog import EventManagementCog
 
@@ -19,7 +19,7 @@ class TriviaBot(commands.Bot):
     async def on_ready(self):
         self.controller = SQLiteController("trivia_bot_db.sqlite")
         await self.set_commands()
-        print(f'{self.user} has connected to Discord!')
+        log(f'{self.user} has connected to Discord!')
         await self.insert_guild_data(self.guilds)
 
 
@@ -37,7 +37,6 @@ class TriviaBot(commands.Bot):
         connection = await self.controller.start_sync_inserts()
         try:
             for guild in guilds:
-
                 #Insert Guild
                 await self.controller.insert_object_async("guild", ["id", "guild_name"], [guild.id, guild.name], connection, guild.id)
 
@@ -66,7 +65,7 @@ class TriviaBot(commands.Bot):
                                 await self.controller.insert_object_async("scorecard", ["user_id", "channel_id","guild_id"], [member.id, channel.id, guild.id], connection, (member.id, channel.id))
 
         except Exception as e:
-            print(e)
+            log_error(e)
         finally:
             await self.controller.close_async(connection)
 
@@ -115,7 +114,7 @@ class TriviaBot(commands.Bot):
             
             return score_str
         except Exception as e:
-            print(e)
+            log_error(e)
             return None
         finally:
             self.controller.close_connection()
@@ -125,12 +124,12 @@ class TriviaBot(commands.Bot):
     :Sync Discord Command Tree
     """
     async def sync_tree(self):
-        print("Syncing...")
+        log("Syncing...")
         try:
             synced = await self.tree.sync()
-            print(f"Synced {len(synced)} commands")
+            log(f"Synced {len(synced)} commands")
         except Exception as e:
-            print(e)
+            log_error(e)
         
 
 load_dotenv()

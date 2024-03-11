@@ -2,7 +2,9 @@ import sqlite3
 import aiosqlite
 import os
 from sql_query_commands import *
+from log_to_file import *
 import inspect
+from log_to_file import log
 
 class SQLiteController():
     
@@ -18,9 +20,9 @@ class SQLiteController():
                 self.conn.close()
                 self.is_open = False
                 self.initial_caller = None
-                print("done")
+                log("SQLite intialized")
             except Exception as e:
-                print(e)
+                log_error(e)
 
 
     """Initialize database"""   
@@ -67,7 +69,7 @@ class SQLiteController():
 
         
         except Exception as e:
-            print(e)
+            log_error(e)
             return None
         
     """
@@ -88,7 +90,7 @@ class SQLiteController():
             return scores
         
         except Exception as e:
-            print(e)
+            log_error(e)
             return None
     
     """
@@ -128,7 +130,7 @@ class SQLiteController():
                             WHERE {where_str}'''
                 self.cursor.execute(query, values)
             except Exception as e:
-                 print(e)
+                 log_error(e)
             
 
 
@@ -164,7 +166,7 @@ class SQLiteController():
             return dict(zip(columns, row))
         
         except Exception as e:
-            print(e)
+            log_error(e)
             return None
     
     """
@@ -182,7 +184,7 @@ class SQLiteController():
                 last_inserted_id = self.cursor.lastrowid
                 return last_inserted_id
         except Exception as e:
-            print(e)
+            log_error(e)
 
     """
     :Create async connection
@@ -215,7 +217,7 @@ class SQLiteController():
                 last_inserted_id = cursor.lastrowid
                 return last_inserted_id
         except Exception as e:
-            print(e)
+            log_error(e)
 
 
     """
@@ -244,7 +246,7 @@ class SQLiteController():
                 result = await connection.execute(f'SELECT 1 FROM {table} WHERE id = ?', (id,))
             return (await result.fetchone()) is not None
         except Exception as e:
-            print(e)
+            log_error(e)
             return False
         
 
@@ -371,4 +373,4 @@ class SQLiteController():
 
         return guilds_data
 
-#sql=SQLiteController()
+sql=SQLiteController()
