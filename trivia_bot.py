@@ -21,6 +21,7 @@ class TriviaBot(commands.Bot):
         await self.set_commands()
         log(f'{self.user} has connected to Discord!')
         await self.insert_guild_data(self.guilds)
+        #await self.sync_tree()
 
 
     """

@@ -212,15 +212,16 @@ class TriviaCog(commands.Cog):
         return content
         
 
-    @app_commands.command(name="refresh-questions", description="Refresh questions")
-    async def refresh(self, interaction: discord.Interaction):
-        try:
-            await interaction.response.defer()
-            await interaction.followup.send("Refreshing....", ephemeral=True)
-            await self.reset_questions_back(interaction.channel)
-        except Exception as e:
-            log_error(e)
-            await interaction.followup.send("Cannot refresh questions", ephemeral=True)
+    # @app_commands.command(name="refresh-questions", description="Refresh questions")
+    # async def refresh_questions(self, interaction: discord.Interaction):
+    #     try:
+    #         await interaction.response.defer()
+    #         await interaction.followup.send("Refreshing....", ephemeral=True)
+    #         await self.move_questions_to_top(interaction.channel)
+    #     except Exception as e:
+    #         log_error(e)
+    #         await interaction.followup.send("Cannot refresh questions", ephemeral=True)
+
     """
     :Handles recreating messages after bot restart. May need to evaluate if bot use grows as this will be an extensive task
     :Unsure of how else to help make this faster.
@@ -258,12 +259,12 @@ class TriviaCog(commands.Cog):
         finally:
             self.controller.close_connection()
 
-    async def reset_questions(self):
+    async def reset_questions(self, channel_refresh=None):
         try:
             self.controller.open_connection()
 
             # Fetch open questions across all guilds
-            open_questions = self.controller.fetch_open_questions()
+            open_questions = self.controller.fetch_open_questions(channel_refresh)
 
             # Create tasks for recreating messages in parallel
             tasks = []
@@ -283,8 +284,14 @@ class TriviaCog(commands.Cog):
     async def recreate_message(self, guild_id, channel_id, message_id, question_data):
         try:
             # Get actual channel and message from Discord
-            channel = await self.bot.fetch_channel(channel_id)
-            message = await channel.fetch_message(message_id)
+            try:
+                channel = await self.bot.fetch_channel(channel_id)
+                message = await channel.fetch_message(message_id)
+            except discord.NotFound:
+                # Message does not exist, delete it from the database
+                self.controller.delete_object("message", (message_id, channel_id), ["id", "channel_id"])
+                log_warning("Message was deleted from database")
+                return
 
             # Recreate members who have not answered the question yet
             members = [member for member in channel.members if member != self.bot.user and member.id in question_data['user_answers'] and not question_data['user_answers'][member.id]['answered']]
