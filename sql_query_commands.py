@@ -62,9 +62,19 @@ def initialize(connection: sqlite3.Connection):
             question_id INTEGER NOT NULL,
             answered BOOLEAN default FALSE,
             correct BOOLEAN default FALSE,
-            PRIMARY KEY (user_id, question_id)
+            PRIMARY KEY (user_id, question_id),
             FOREIGN KEY(user_id) REFERENCES user(id),
             FOREIGN KEY(question_id) REFERENCES question_data(id) ON DELETE CASCADE
+        );''',
+        '''CREATE TABLE IF NOT EXISTS opentdb_tokens
+        (
+            guild_id INTEGER,
+            channel_id INTEGER,
+            token TEXT,
+            last_refreshed TEXT,
+            refresh_count INTEGER DEFAULT 0,
+            PRIMARY KEY (guild_id, channel_id),
+            FOREIGN KEY (channel_id, guild_id) REFERENCES channel(id, guild_id) ON DELETE CASCADE
         );'''
         ]
 

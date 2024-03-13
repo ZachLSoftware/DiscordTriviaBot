@@ -17,7 +17,8 @@ class TriviaBot(commands.Bot):
     :Insert data from each guild (Checks in place to not try to re-insert data)
     """
     async def on_ready(self):
-        self.controller = SQLiteController("trivia_bot_db.sqlite")
+        self.handle_delete = True
+        self.controller = SQLiteController("test.sqlite")
         await self.set_commands()
         log(f'{self.user} has connected to Discord!')
         await self.insert_guild_data(self.guilds)
@@ -134,7 +135,7 @@ class TriviaBot(commands.Bot):
         
 
 load_dotenv()
-TOKEN = os.getenv("TOKEN")
+TOKEN = os.getenv("TEST_TOKEN")
 intents = discord.Intents.default()
 intents.message_content=True
 intents.guilds = True

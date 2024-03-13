@@ -3,6 +3,7 @@ from discord import app_commands
 from discord.ext import commands
 from categories_enum import TriviaCategories
 from trivia_bot_sql_controller import SQLiteController
+from datetime import datetime
 from log_to_file import *
 import copy
 import asyncio
@@ -51,15 +52,16 @@ class TriviaCog(commands.Cog):
     async def new_random_question(self, interaction: discord.Interaction):
         
         try:
+            await interaction.response.defer()
             #Get Question from opentdb
-            q = await self.get_question("https://opentdb.com/api.php?amount=1")
+            q = await self.get_question("https://opentdb.com/api.php?amount=1", interaction)
             if q == False:
-                await interaction.response.send_message("Error Retrieving Question")
+                await interaction.followup.send("Error Retrieving Question")
                 return
             
             await self.setup_question(interaction, q)
         except Exception as e:
-            await interaction.response.send_message("Error Retrieving Question")
+            await interaction.followup.send("Error Retrieving Question")
             log_error(e)
 
 
@@ -71,14 +73,15 @@ class TriviaCog(commands.Cog):
     @app_commands.describe(categories="Categories to choose from")
     async def new_question(self, interaction: discord.Interaction, categories: TriviaCategories):
         try:
+            await interaction.response.defer()
             url = f"https://opentdb.com/api.php?amount=1&category={categories.value}"
-            q = await self.get_question(url)
+            q = await self.get_question(url, interaction)
             if q == False:
-                await interaction.response.send_message("Error Retrieving Question")
+                await interaction.followup.send("Error Retrieving Question")
                 return
             await self.setup_question(interaction, q)
         except Exception as e:
-            await interaction.response.send_message("Error Retrieving Question")
+            await interaction.followup.send("Error Retrieving Question")
             log_error(e)
 
 
@@ -88,7 +91,8 @@ class TriviaCog(commands.Cog):
     """
     @app_commands.command(name="scoreboard", description="See the scoreboard")
     async def scoreboard(self, interaction: discord.Interaction):
-        await interaction.response.send_message(content=self.bot.get_scores(interaction.channel), ephemeral=False)
+        await interaction.response.defer()
+        await interaction.followup.send(content=self.bot.get_scores(interaction.channel), ephemeral=False)
 
     async def question_completed(self, interaction: discord.Interaction, result_string, answer):
         try:
@@ -103,15 +107,83 @@ class TriviaCog(commands.Cog):
             await interaction.channel.send("There was a problem closing the question")
 
 
+    """Refresh open questions to the top."""
+    @app_commands.command(name="refresh-questions", description="Refresh questions")
+    async def refresh_questions(self, interaction: discord.Interaction):
+        try:
+            await interaction.response.defer(ephemeral=True)
+            await interaction.followup.send("Refreshing....", ephemeral=True)
+            self.bot.handle_delete = False
+            await self.reset_questions(interaction.channel)
+        except Exception as e:
+            log_error(e)
+            await interaction.followup.send("Cannot refresh questions", ephemeral=True)
+        finally:
+            self.bot.handle_delete = True
+
+
+    async def get_token(self, guild_id, channel_id, force_new = False):
+        try:
+            self.controller.open_connection()
+            if not force_new:
+                token = self.controller.get_object("opentdb_tokens", (guild_id, channel_id), ("guild_id", "channel_id"))
+            else:
+                self.controller.delete_object("opentdb_tokens", (guild_id, channel_id), ("guild_id", "channel_id"))
+                token = None
+            if token is None:
+                token_request = requests.get("https://opentdb.com/api_token.php?command=request")
+                if token_request.json()['response_code']!=0:
+                    raise Exception("Error getting token from API")
+                else:
+                    token = token_request.json()["token"]
+                    timestamp = datetime.now().isoformat()
+                    self.controller.insert_object("opentdb_tokens", ["guild_id", "channel_id", "token", "last_refreshed"], [guild_id, channel_id, token, timestamp])
+                    return token
+            else:
+                timestamp = datetime.now().isoformat()
+                self.controller.update_object("opentdb_tokens", (guild_id, channel_id), ["last_refreshed", "refresh_count"], [timestamp, 0], ("guild_id", "channel_id"))
+                return token["token"]
+        except Exception as e:
+            log_error(e)
+        finally:
+            self.controller.close_connection()
+
     """
     :Actual get request for the questions
     """
-    async def get_question(self, url):
-        result =  requests.get(url)
-        if result.json()['response_code']!=0:
-            return False
-        else:
-            return result.json()['results'][0]
+    async def get_question(self, url, interaction: discord.Interaction):
+        retry = True
+        retry_count = 0
+        token = await self.get_token(interaction.guild.id, interaction.channel_id)
+        try:
+            await interaction.followup.send("Getting question....")
+            msg = await interaction.original_response()
+            self.controller.open_connection()
+                #Insert Message data
+            self.controller.insert_object("message", ["id", "channel_id", "guild_id"],[msg.id, msg.channel.id, msg.guild.id], (msg.id, msg.channel.id))
+            self.controller.close_connection()
+        except Exception as e:
+            log_error(e)
+
+        while retry:
+            if retry_count>=2:
+                return False
+            result =  requests.get(url, token).json()
+            code = result['response_code']
+            if code==0:
+                return result['results'][0]
+            elif code == 1 or code == 2:
+                return False
+            elif code == 3:
+                token = await self.get_token(interaction.guild.id, interaction.channel.id, True)
+            elif code == 4:
+                await interaction.followup.send("You have had all the questions found in this category. Please choose another category or reset the session", ephemeral=True)
+            elif code == 5:
+                await msg.edit(content="Waiting for question from server... Please wait...")
+                await asyncio.sleep(5)
+            else:
+                return False
+                
         
     """
     :Setup method for questions
@@ -132,20 +204,16 @@ class TriviaCog(commands.Cog):
 
             try:
                 #Create new question view and send the question and retrieve the msg info from discord
-                await interaction.response.defer()
-                test = await interaction.followup.send(content=f"@everyone \n **Category: {html.unescape(q['category'])} \n Difficulty: {q['difficulty']}**\n {user_string}# {html.unescape(q['question'])}",view=question_view(copy.deepcopy(q), members, self.question_completed, self.user_answered), ephemeral=False)
                 msg = await interaction.original_response()
+                await msg.edit(content=f"@everyone \n **Category: {html.unescape(q['category'])} \n Difficulty: {q['difficulty']}**\n {user_string}# {html.unescape(q['question'])}",view=question_view(copy.deepcopy(q), members, self.question_completed, self.user_answered))
+                
             except Exception as e:
-                log("Error sending", e)
+                log_error(e)
                 await interaction.followup.send("Error with question setup. Please try again later." + e, ephemeral=True)
                 return
                 
             try:
                 self.controller.open_connection()
-
-                #Insert Message data
-                self.controller.insert_object("message", ["id", "channel_id", "guild_id"],[msg.id, msg.channel.id, msg.guild.id], (msg.id, msg.channel.id))
-
                 #Insert Question Data
                 question_id=self.controller.insert_object("question_data", ["question", "correct_answer", "category", "difficulty", "message_id", "channel_id"], [q['question'], q['correct_answer'], q['category'], q['difficulty'], msg.id, msg.channel.id])
 
@@ -211,16 +279,6 @@ class TriviaCog(commands.Cog):
         content = user_string + "***\n" + interaction.message.content.split("***\n")[1]
         return content
         
-
-    # @app_commands.command(name="refresh-questions", description="Refresh questions")
-    # async def refresh_questions(self, interaction: discord.Interaction):
-    #     try:
-    #         await interaction.response.defer()
-    #         await interaction.followup.send("Refreshing....", ephemeral=True)
-    #         await self.move_questions_to_top(interaction.channel)
-    #     except Exception as e:
-    #         log_error(e)
-    #         await interaction.followup.send("Cannot refresh questions", ephemeral=True)
 
     """
     :Handles recreating messages after bot restart. May need to evaluate if bot use grows as this will be an extensive task

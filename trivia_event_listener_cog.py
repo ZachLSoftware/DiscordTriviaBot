@@ -149,10 +149,11 @@ class EventManagementCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message_delete(self, message: discord.Message):
-        try:
-            self.controller.open_connection()
-            self.controller.delete_object("message", (message.id, message.channel.id), ["id", "channel_id"])
-        except Exception as e:
-            log_error(e)
-        finally:
-            self.controller.close_connection()
+        if self.bot.handle_delete:
+            try:
+                self.controller.open_connection()
+                self.controller.delete_object("message", (message.id, message.channel.id), ["id", "channel_id"])
+            except Exception as e:
+                log_error(e)
+            finally:
+                self.controller.close_connection()

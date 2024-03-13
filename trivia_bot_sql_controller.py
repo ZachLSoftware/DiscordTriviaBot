@@ -154,8 +154,9 @@ class SQLiteController():
             parameters = id
         else:
             where_str = "id = ?"
+            parameters = (id,)
         command = f'''SELECT * FROM {table} WHERE {where_str}'''
-        parameters = (id,)
+        
 
         try:
             self.cursor.execute(command, parameters)
@@ -227,17 +228,20 @@ class SQLiteController():
         try:
             if isinstance(id,tuple):
                 if table == "channel":
-                        key1 = "id"
-                        key2 = "guild_id"
+                    key1 = "id"
+                    key2 = "guild_id"
                 elif table == "message":
-                        key1="id"
-                        key2="channel_id"
+                    key1="id"
+                    key2="channel_id"
                 elif table == "scorecard":
-                        key1="user_id"
-                        key2="channel_id"
+                    key1="user_id"
+                    key2="channel_id"
                 elif table == "user_answers":
-                        key1="user_id"
-                        key2="question_id"
+                    key1="user_id"
+                    key2="question_id"
+                elif table == "opentdb_tokens":
+                     key1 = "guild_id"
+                     key2 = "channel_id"
                 else:
                     pass
                 
@@ -257,17 +261,20 @@ class SQLiteController():
 
         if isinstance(id,tuple):
             if table == "channel":
-                    key1 = "id"
-                    key2 = "guild_id"
+                key1 = "id"
+                key2 = "guild_id"
             elif table == "message":
-                    key1="id"
-                    key2="channel_id"
+                key1="id"
+                key2="channel_id"
             elif table == "scorecard":
-                    key1="user_id"
-                    key2="channel_id"
+                key1="user_id"
+                key2="channel_id"
             elif table == "user_answers":
-                    key1="user_id"
-                    key2="question_id"
+                key1="user_id"
+                key2="question_id"
+            elif table == "opentdb_tokens":
+                    key1 = "guild_id"
+                    key2 = "channel_id"
             else:
                 pass
             self.cursor.execute(f'SELECT 1 FROM {table} WHERE {key1} = ? AND {key2} = ?', id)
@@ -306,6 +313,8 @@ class SQLiteController():
             self.cursor.execute("SELECT * FROM scorecard WHERE user_id = ?", id)
             if self.cursor.fetchone() is None:
                 self.delete_object("user", id[0])
+
+    
 
     """
     :Fetch all open questions
@@ -373,4 +382,4 @@ class SQLiteController():
 
         return guilds_data
 
-sql=SQLiteController()
+#sql=SQLiteController()
