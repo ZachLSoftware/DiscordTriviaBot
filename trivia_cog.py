@@ -3,7 +3,7 @@ from discord import app_commands
 from discord.ext import commands
 from categories_enum import TriviaCategories
 from trivia_bot_sql_controller import SQLiteController
-from datetime import datetime
+from datetime import datetime, timedelta
 from log_to_file import *
 import copy
 import asyncio
@@ -43,6 +43,8 @@ class TriviaCog(commands.Cog):
     async def setup(self) -> None:
         await self.reset_questions()
         await self.bot.add_cog(self)
+        self.bot.loop.create_task(self.background_refresh())
+
 
     """
     :/new-random-question
@@ -54,7 +56,7 @@ class TriviaCog(commands.Cog):
         try:
             await interaction.response.defer()
             #Get Question from opentdb
-            q = await self.get_question("https://opentdb.com/api.php?amount=1", interaction)
+            q = await self.get_question({"amount": 1}, interaction)
             if q == False:
                 await interaction.followup.send("Error Retrieving Question")
                 return
@@ -74,8 +76,11 @@ class TriviaCog(commands.Cog):
     async def new_question(self, interaction: discord.Interaction, categories: TriviaCategories):
         try:
             await interaction.response.defer()
-            url = f"https://opentdb.com/api.php?amount=1&category={categories.value}"
-            q = await self.get_question(url, interaction)
+            params = {
+                "amount": 1,
+                "category": categories.value
+            }
+            q = await self.get_question(params, interaction)
             if q == False:
                 await interaction.followup.send("Error Retrieving Question")
                 return
@@ -106,6 +111,20 @@ class TriviaCog(commands.Cog):
             log_error(e)
             await interaction.channel.send("There was a problem closing the question")
 
+    async def close_question(self, message: discord.Message):
+        try:
+            self.controller.open_connection()
+            qid = self.controller.get_question_id(message.guild.id, message.channel.id, message.id)
+            q = self.controller.get_object("question_data", qid)
+            answer=q["correct_answer"]
+            self.controller.delete_question(message.id)
+            self.controller.close_connection()
+            content = message.content
+            await message.edit(content=f"{content} \n ## The correct answer was: {answer} \n **Question is now closed.**", view=None)
+            #await interaction.followup.send(content=self.bot.get_scores(interaction.channel))
+        except Exception as e:
+            log_error(e)
+            await message.channel.send("There was a problem closing the question")
 
     """Refresh open questions to the top."""
     @app_commands.command(name="refresh-questions", description="Refresh questions")
@@ -120,6 +139,84 @@ class TriviaCog(commands.Cog):
             await interaction.followup.send("Cannot refresh questions", ephemeral=True)
         finally:
             self.bot.handle_delete = True
+
+    async def background_refresh(self):
+        while True:
+            try:
+                await self.refresh_tokens()
+                await self.message_timeout()
+            except Exception as e:
+                log_error(e)
+            finally:
+                await asyncio.sleep(3600)
+
+    async def message_timeout(self):
+        self.controller.open_connection()
+        try:
+            messages = self.controller.fetch_all("message")
+            for row, msg in messages.items():
+                created = datetime.fromisoformat(msg["created"])
+                dif = datetime.now()-created
+                if dif > timedelta(hours=24):
+                    channel = await self.bot.fetch_channel(msg["channel_id"])
+                    message = await channel.fetch_message(msg["id"])
+                    await self.close_question(message)
+        except Exception as e:
+            log_error(e)
+        finally:
+            self.controller.close_connection()
+
+    async def refresh_tokens(self):
+        try:
+            self.controller.open_connection()
+            tokens = self.controller.get_opentdb_tokens()
+            now = datetime.now()
+            for row, token in tokens.items():
+                try:
+                    guild = token["guild_id"]
+                    channel = token["channel_id"]
+                    current_token = token["token"]
+                    lastr = datetime.fromisoformat(token["last_refreshed"])
+                    rcount = token["refresh_count"]
+                    timedif = now-lastr
+                    if timedif > timedelta(hours=6):
+                         await self.get_token(guild, channel, True)
+                    elif timedif >= timedelta(hours=5):
+
+                        #If token has been inactive for 48 hours, delete
+                        if rcount >= 10:
+                            await self.controller.delete_object("opentdb_tokens", (guild, channel), ("guild_id", "channel_id"))
+                            continue
+
+                        #Create loop to refresh the token, accounting for rate limiting.
+                        retry = True
+                        retry_count = 0
+                        while retry:
+                            result = requests.get(f"https://opentdb.com/api.php?amount=1&category=31&token={current_token}").json()
+                            code = result["response_code"]
+                            if code==0:
+                                self.controller.update_object("opentdb_tokens", (guild, channel), ["last_refreshed", "refresh_count"], [now.isoformat(), rcount+1], ("guild_id", "channel_id"))
+                                retry = False
+                                break
+                            elif code==3 or retry_count >= 2:
+                                await self.get_token(guild, channel, True)
+                                retry = False
+                                break
+                            elif code==5 and retry_count < 2:
+                                retry_count+=1
+                                await asyncio.sleep(5)
+                                continue
+                            else:
+                                retry=False
+                                break
+                    else:
+                        continue
+                except Exception as e:
+                    log_error(e)
+        except Exception as e:
+            log_error(e)
+        finally:                
+            self.controller.close_connection()
 
 
     async def get_token(self, guild_id, channel_id, force_new = False):
@@ -147,42 +244,49 @@ class TriviaCog(commands.Cog):
             log_error(e)
         finally:
             self.controller.close_connection()
-
     """
     :Actual get request for the questions
     """
-    async def get_question(self, url, interaction: discord.Interaction):
+    async def get_question(self, params, interaction: discord.Interaction):
         retry = True
         retry_count = 0
+        url = "https://opentdb.com/api.php"
         token = await self.get_token(interaction.guild.id, interaction.channel_id)
+        params["token"] = token
         try:
             await interaction.followup.send("Getting question....")
             msg = await interaction.original_response()
             self.controller.open_connection()
                 #Insert Message data
-            self.controller.insert_object("message", ["id", "channel_id", "guild_id"],[msg.id, msg.channel.id, msg.guild.id], (msg.id, msg.channel.id))
-            self.controller.close_connection()
+            created = datetime.now().isoformat()
+            self.controller.insert_object("message", ["id", "channel_id", "guild_id", "created"],[msg.id, msg.channel.id, msg.guild.id, created], (msg.id, msg.channel.id))
+            
+
+
+            while retry:
+                if retry_count>=2:
+                    return False
+                response =  requests.get(url, params=params)
+                result = response.json()
+                self.controller.update_object("opentdb_tokens", (interaction.guild.id, interaction.channel.id), ["refresh_count"], [0], ("guild_id", "channel_id"))
+                code = result['response_code']
+                if code==0:
+                    return result['results'][0]
+                elif code == 1 or code == 2:
+                    return False
+                elif code == 3:
+                    token = await self.get_token(interaction.guild.id, interaction.channel.id, True)
+                elif code == 4:
+                    await interaction.followup.send("You have had all the questions found in this category. Please choose another category or reset the session", ephemeral=True)
+                elif code == 5:
+                    await msg.edit(content="Waiting for question from server... Please wait...")
+                    await asyncio.sleep(5)
+                else:
+                    return False
         except Exception as e:
             log_error(e)
-
-        while retry:
-            if retry_count>=2:
-                return False
-            result =  requests.get(url, token).json()
-            code = result['response_code']
-            if code==0:
-                return result['results'][0]
-            elif code == 1 or code == 2:
-                return False
-            elif code == 3:
-                token = await self.get_token(interaction.guild.id, interaction.channel.id, True)
-            elif code == 4:
-                await interaction.followup.send("You have had all the questions found in this category. Please choose another category or reset the session", ephemeral=True)
-            elif code == 5:
-                await msg.edit(content="Waiting for question from server... Please wait...")
-                await asyncio.sleep(5)
-            else:
-                return False
+        finally:
+            self.controller.close_connection()
                 
         
     """

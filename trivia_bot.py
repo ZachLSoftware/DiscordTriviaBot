@@ -8,6 +8,8 @@ import os
 from log_to_file import *
 from trivia_bot_sql_controller import SQLiteController
 from trivia_event_listener_cog import EventManagementCog
+from datetime import datetime
+import requests
 
 
 class TriviaBot(commands.Bot):

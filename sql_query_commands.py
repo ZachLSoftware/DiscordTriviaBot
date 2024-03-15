@@ -35,6 +35,7 @@ def initialize(connection: sqlite3.Connection):
             id INTEGER NOT NULL,
             channel_id INTEGER NOT NULL,
             guild_id INTEGER NOT NULL,
+            created TEXT,
             PRIMARY KEY (id, channel_id),
             FOREIGN KEY(channel_id, guild_id) REFERENCES channel(id, guild_id) ON DELETE CASCADE
         )''',

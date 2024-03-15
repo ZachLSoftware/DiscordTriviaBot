@@ -43,21 +43,20 @@ class SQLiteController():
             self.is_open = True
 
     def close_connection(self):
-        caller = inspect.currentframe().f_back.f_code.co_name
+        caller = inspect.currentframe().f_back.f_code.co_name     
         if caller == self.initial_caller:
             self.conn.commit()
             self.conn.close()
             self.initial_caller = None
             self.is_open = False
-        self.is_open = False
 
 
     """
     :Get the score of a user
     """
-    def get_score(self, guild_id, user_id):
-        command = '''SELECT * FROM scorecard WHERE guild_id = ? and user_id = ?'''
-        parameters = (guild_id, user_id)
+    def get_score(self, channel_id, user_id):
+        command = '''SELECT * FROM scorecard WHERE channel_id = ? and user_id = ?'''
+        parameters = (channel_id, user_id)
 
         try:
             self.cursor.execute(command, parameters)
@@ -314,7 +313,35 @@ class SQLiteController():
             if self.cursor.fetchone() is None:
                 self.delete_object("user", id[0])
 
+    def get_opentdb_tokens(self):
+        query = "SELECT * from opentdb_tokens"
+        self.cursor.execute(query)
+        tokens = {}
+        rows = self.cursor.fetchall()
+        count = 0
+        for row in rows:
+            if row is None:
+                return None
+            columns = [desc[0] for desc in self.cursor.description]
+            temp = dict(zip(columns, row))
+            tokens[count]=temp
+            count+=1
+        return tokens
     
+    def fetch_all(self, table):
+        query = f"SELECT * from {table}"
+        self.cursor.execute(query)
+        objects = {}
+        rows = self.cursor.fetchall()
+        count = 0
+        for row in rows:
+            if row is None:
+                return None
+            columns = [desc[0] for desc in self.cursor.description]
+            temp = dict(zip(columns, row))
+            objects[count]=temp
+            count+=1
+        return objects
 
     """
     :Fetch all open questions
